@@ -1,0 +1,23 @@
+[package]
+name = "kirv"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+nix = { version = "0.31.2", features = ["signal", "process"] }
+signal-hook = "0.4.4"
+sysinfo = "0.30"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+darwin-libproc = "0.2.0"
+
+[package.metadata.docs.rs]
+targets = ["x86_64-apple-darwin"]
+
+[profile.dev]
+opt-level = 0
+
+[profile.release]
+opt-level = 3
+strip = true
+lto = true

@@ -1,0 +1,110 @@
+use signal_hook::consts::signal::*;
+use signal_hook::iterator::Signals;
+use std::any::Any;
+use std::error::Error;
+use std::io;
+use std::sync::mpsc;
+use std::thread;
+
+use crate::control;
+
+pub fn run() -> Result<(), Box<dyn Error>> {
+    let mut signals = Signals::new([SIGINT, SIGTERM, SIGHUP])?;
+    let handle = signals.handle();
+    let (shutdown_tx, shutdown_rx) = mpsc::channel();
+
+    let signal_thread = thread::spawn(move || {
+        if let Some(s) = (&mut signals).into_iter().next() {
+            println!(
+                "received shutdown signal {}; stopping control loop and exiting",
+                signal_name(s)
+            );
+            let shutdown_result = control::stop();
+            if let Err(err) = &shutdown_result {
+                eprintln!("failed to stop control loop cleanly: {err}");
+            }
+            let _ = shutdown_tx.send(shutdown_result);
+        }
+    });
+
+    let control_result = control::start();
+
+    handle.close();
+
+    if let Err(payload) = signal_thread.join() {
+        return Err(Box::new(io::Error::other(format!(
+            "signal-handling thread panicked{}",
+            panic_payload_suffix(payload.as_ref())
+        ))));
+    }
+
+    let shutdown_result = shutdown_rx
+        .try_recv()
+        .unwrap_or(Ok(()))
+        .map_err(|err| -> Box<dyn Error> { Box::new(err) });
+
+    control_result?;
+    shutdown_result
+}
+
+fn signal_name(signal: i32) -> &'static str {
+    match signal {
+        SIGINT => "SIGINT",
+        SIGTERM => "SIGTERM",
+        SIGHUP => "SIGHUP",
+        _ => "UNKNOWN",
+    }
+}
+
+fn panic_payload_suffix(payload: &(dyn Any + Send)) -> String {
+    if let Some(message) = payload.downcast_ref::<&str>() {
+        format!(": {message}")
+    } else if let Some(message) = payload.downcast_ref::<String>() {
+        format!(": {message}")
+    } else {
+        String::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn boxed_panic_payload(payload: impl Any + Send) -> Box<dyn Any + Send> {
+        Box::new(payload)
+    }
+
+    #[test]
+    fn maps_supported_shutdown_signals_to_names() {
+        assert_eq!(signal_name(SIGINT), "SIGINT");
+        assert_eq!(signal_name(SIGTERM), "SIGTERM");
+        assert_eq!(signal_name(SIGHUP), "SIGHUP");
+    }
+
+    #[test]
+    fn includes_str_panic_payload_in_suffix() {
+        let payload = boxed_panic_payload("signal loop failed");
+
+        assert_eq!(
+            panic_payload_suffix(payload.as_ref()),
+            ": signal loop failed"
+        );
+    }
+
+    #[test]
+    fn includes_string_panic_payload_in_suffix() {
+        let payload = boxed_panic_payload(String::from("signal loop failed"));
+
+        assert_eq!(
+            panic_payload_suffix(payload.as_ref()),
+            ": signal loop failed"
+        );
+    }
+
+    #[test]
+    fn omits_unknown_panic_payload_from_suffix() {
+        let payload = boxed_panic_payload(42_u8);
+
+        assert!(panic_payload_suffix(payload.as_ref()).is_empty());
+    }
+}
