@@ -34,6 +34,14 @@ impl Recon {
     }
 
     pub fn validate_target_group(&self, target: &TargetGroup) -> io::Result<bool> {
+        let Ok(identity) = self.process_identity(target.root.pid) else {
+            return Ok(false);
+        };
+
+        if !same_process_identity(target.root, identity) {
+            return Ok(false);
+        }
+
         Ok(raw_group_pids(target.pgid)?.is_some_and(|pids| group_has_live_members(&pids)))
     }
 
@@ -90,6 +98,10 @@ impl Recon {
 
 fn group_has_live_members(pids: &[i32]) -> bool {
     pids.iter().any(|pid| *pid > 0)
+}
+
+fn same_process_identity(expected: ProcessIdentity, actual: ProcessIdentity) -> bool {
+    expected == actual
 }
 
 fn raw_group_pids(pgid: i32) -> io::Result<Option<Vec<i32>>> {
@@ -203,5 +215,33 @@ mod tests {
                 start_tvusec: 456,
             }
         );
+    }
+
+    #[test]
+    fn matching_identity_is_treated_as_same_process() {
+        let target = ProcessIdentity {
+            pid: 42,
+            pgid: 77,
+            start_tvsec: 123,
+            start_tvusec: 456,
+        };
+
+        assert!(same_process_identity(target, target));
+    }
+
+    #[test]
+    fn reused_pid_with_different_start_time_is_treated_as_different_process() {
+        let original = ProcessIdentity {
+            pid: 42,
+            pgid: 77,
+            start_tvsec: 123,
+            start_tvusec: 456,
+        };
+        let reused = ProcessIdentity {
+            start_tvsec: 999,
+            ..original
+        };
+
+        assert!(!same_process_identity(original, reused));
     }
 }
