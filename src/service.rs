@@ -32,10 +32,10 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     handle.close();
 
     if let Err(payload) = signal_thread.join() {
-        return Err(Box::new(io::Error::other(format!(
-            "signal-handling thread panicked{}",
-            panic_payload_suffix(payload.as_ref())
-        ))));
+        return Err(Box::new(signal_thread_panic_error(
+            payload.as_ref(),
+            &control_result,
+        )));
     }
 
     let shutdown_result = shutdown_rx
@@ -64,6 +64,20 @@ fn panic_payload_suffix(payload: &(dyn Any + Send)) -> String {
     } else {
         String::new()
     }
+}
+
+fn signal_thread_panic_error(
+    payload: &(dyn Any + Send),
+    control_result: &Result<(), Box<dyn Error>>,
+) -> io::Error {
+    let mut message = format!(
+        "signal-handling thread panicked{}",
+        panic_payload_suffix(payload)
+    );
+    if let Err(err) = control_result {
+        message.push_str(&format!("; control loop also failed: {err}"));
+    }
+    io::Error::other(message)
 }
 
 #[cfg(test)]
@@ -106,5 +120,30 @@ mod tests {
         let payload = boxed_panic_payload(42_u8);
 
         assert!(panic_payload_suffix(payload.as_ref()).is_empty());
+    }
+
+    #[test]
+    fn signal_thread_panic_error_includes_control_loop_error() {
+        let payload = boxed_panic_payload("signal loop failed");
+        let control_result: Result<(), Box<dyn Error>> =
+            Err(Box::new(io::Error::other("control loop failed")));
+
+        let message = signal_thread_panic_error(payload.as_ref(), &control_result).to_string();
+
+        assert!(message.contains("signal-handling thread panicked: signal loop failed"));
+        assert!(message.contains("control loop also failed: control loop failed"));
+    }
+
+    #[test]
+    fn signal_thread_panic_error_omits_successful_control_loop() {
+        let payload = boxed_panic_payload("signal loop failed");
+        let control_result = Ok(());
+
+        let message = signal_thread_panic_error(payload.as_ref(), &control_result).to_string();
+
+        assert_eq!(
+            message,
+            "signal-handling thread panicked: signal loop failed"
+        );
     }
 }
