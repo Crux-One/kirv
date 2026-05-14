@@ -1,6 +1,3 @@
-#[cfg(not(target_os = "macos"))]
-compile_error!("kirv is macOS-only because it controls Darwin process groups.");
-
 #[cfg(target_os = "macos")]
 use kirv::service;
 
@@ -11,3 +8,6 @@ fn main() {
         std::process::exit(1);
     }
 }
+
+#[cfg(not(target_os = "macos"))]
+fn main() {}
