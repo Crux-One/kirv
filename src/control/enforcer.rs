@@ -18,8 +18,11 @@ impl Enforcer {
             return Ok(());
         }
 
-        self.stop_group(target.pgid)?;
         super::set_stopped_group(target.pgid);
+        if let Err(err) = self.stop_group(target.pgid) {
+            super::clear_stopped_group();
+            return Err(err);
+        }
         super::wait::with_stop_check(decision.stop_duration, super::stop_requested, thread::sleep);
         self.resume_tracked_members(target.pgid)
     }
