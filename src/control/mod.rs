@@ -172,7 +172,7 @@ fn guard_target_group(target_pgid: i32) -> Result<(), Box<dyn Error>> {
 }
 
 fn switch_stop_signal() {
-    STOP_SIGNAL.fetch_or(true, Ordering::SeqCst);
+    STOP_SIGNAL.store(true, Ordering::SeqCst);
 }
 
 fn stop_requested() -> bool {
