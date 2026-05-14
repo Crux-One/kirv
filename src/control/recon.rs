@@ -45,14 +45,6 @@ impl Recon {
         Ok(raw_group_pids(target.pgid)?.is_some_and(|pids| group_has_live_members(&pids)))
     }
 
-    pub fn group_pids(&self, pgid: i32) -> io::Result<Vec<i32>> {
-        Ok(raw_group_pids(pgid)?
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|pid| *pid > 0)
-            .collect())
-    }
-
     pub fn observe_group(&mut self, target: &TargetGroup) -> io::Result<Option<RawObservation>> {
         let Some(pids) = raw_group_pids(target.pgid)? else {
             return Ok(None);
@@ -106,6 +98,14 @@ fn same_process_identity(expected: ProcessIdentity, actual: ProcessIdentity) -> 
 
 fn raw_group_pids(pgid: i32) -> io::Result<Option<Vec<i32>>> {
     normalize_group_pids_result(pgrp_only_pids(pgid))
+}
+
+pub(super) fn group_pids(pgid: i32) -> io::Result<Vec<i32>> {
+    Ok(raw_group_pids(pgid)?
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|pid| *pid > 0)
+        .collect())
 }
 
 fn normalize_group_pids_result(result: io::Result<Vec<i32>>) -> io::Result<Option<Vec<i32>>> {

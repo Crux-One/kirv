@@ -247,7 +247,7 @@ fn resume_tracked_members(active_target: ActiveTarget) -> std::io::Result<()> {
 }
 
 fn current_group_pids(pgid: i32) -> std::io::Result<Vec<i32>> {
-    Recon::new().group_pids(pgid)
+    recon::group_pids(pgid)
 }
 
 fn compute_control_decision(
