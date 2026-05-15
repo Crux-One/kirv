@@ -9,9 +9,7 @@ pub struct Recon {
 
 impl Recon {
     pub fn new() -> Self {
-        Self {
-            sys: System::new_with_specifics(RefreshKind::new().without_memory().without_cpu()),
-        }
+        Self::default()
     }
 
     pub fn resolve_target_group(&mut self, pid: i32) -> Result<TargetGroup, Box<dyn Error>> {
@@ -85,6 +83,14 @@ impl Recon {
             process_count: per_pid_cpu.len(),
             per_pid_cpu,
         }))
+    }
+}
+
+impl Default for Recon {
+    fn default() -> Self {
+        Self {
+            sys: System::new_with_specifics(RefreshKind::new().without_memory().without_cpu()),
+        }
     }
 }
 

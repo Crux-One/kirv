@@ -8,12 +8,7 @@ pub struct Reporter {
 
 impl Reporter {
     pub fn new() -> Self {
-        Self {
-            enabled: std::env::var("KIRV_REPORT")
-                .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
-                .unwrap_or(false),
-            last_emit_at: Instant::now(),
-        }
+        Self::default()
     }
 
     pub fn report(
@@ -41,5 +36,16 @@ impl Reporter {
             estimated.timed_out,
             decision.stop_duration.as_secs_f64() * 1_000.0,
         );
+    }
+}
+
+impl Default for Reporter {
+    fn default() -> Self {
+        Self {
+            enabled: std::env::var("KIRV_REPORT")
+                .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+                .unwrap_or(false),
+            last_emit_at: Instant::now(),
+        }
     }
 }

@@ -6,6 +6,7 @@ use nix::{
 };
 use std::{io, thread};
 
+#[derive(Default)]
 pub struct Enforcer;
 
 impl Enforcer {
