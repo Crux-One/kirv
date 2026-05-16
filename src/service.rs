@@ -3,6 +3,7 @@ use signal_hook::iterator::Signals;
 use std::any::Any;
 use std::error::Error;
 use std::io;
+use std::process;
 use std::sync::mpsc;
 use std::thread;
 
@@ -12,20 +13,35 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     let mut signals = Signals::new([SIGINT, SIGTERM, SIGHUP])?;
     let handle = signals.handle();
     let (shutdown_tx, shutdown_rx) = mpsc::channel();
+    let (shutdown_started_tx, shutdown_started_rx) = mpsc::channel();
 
     let signal_thread = thread::spawn(move || {
-        if let Some(s) = (&mut signals).into_iter().next() {
+        let mut shutdown_started = false;
+
+        for s in &mut signals {
+            if shutdown_started {
+                eprintln!(
+                    "received second shutdown signal {}; exiting immediately",
+                    signal_name(s)
+                );
+                process::exit(signal_exit_code(s));
+            }
+
+            shutdown_started = true;
+            let _ = shutdown_started_tx.send(());
             println!(
                 "received shutdown signal {}; stopping control loop and exiting",
                 signal_name(s)
             );
-            // Keep the signal handler registered while stop() resumes any stopped target.
-            // A second shutdown signal should not interrupt the resume path and leave it stopped.
-            let shutdown_result = control::stop();
-            if let Err(err) = &shutdown_result {
-                eprintln!("failed to stop control loop cleanly: {err}");
-            }
-            let _ = shutdown_tx.send(shutdown_result);
+
+            let shutdown_tx = shutdown_tx.clone();
+            thread::spawn(move || {
+                let shutdown_result = control::stop();
+                if let Err(err) = &shutdown_result {
+                    eprintln!("failed to stop control loop cleanly: {err}");
+                }
+                let _ = shutdown_tx.send(shutdown_result);
+            });
         }
     });
 
@@ -40,10 +56,13 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         )));
     }
 
-    let shutdown_result = shutdown_rx
-        .try_recv()
-        .unwrap_or(Ok(()))
-        .map_err(|err| -> Box<dyn Error> { Box::new(err) });
+    let shutdown_result = match shutdown_started_rx.try_recv() {
+        Ok(()) => shutdown_rx
+            .recv()
+            .map_err(|err| -> Box<dyn Error> { Box::new(err) })?
+            .map_err(|err| -> Box<dyn Error> { Box::new(err) }),
+        Err(_) => Ok(()),
+    };
 
     control_result?;
     shutdown_result
@@ -56,6 +75,10 @@ fn signal_name(signal: i32) -> &'static str {
         SIGHUP => "SIGHUP",
         _ => "UNKNOWN",
     }
+}
+
+fn signal_exit_code(signal: i32) -> i32 {
+    128 + signal
 }
 
 fn panic_payload_suffix(payload: &(dyn Any + Send)) -> String {
@@ -95,6 +118,12 @@ mod tests {
         assert_eq!(signal_name(SIGINT), "SIGINT");
         assert_eq!(signal_name(SIGTERM), "SIGTERM");
         assert_eq!(signal_name(SIGHUP), "SIGHUP");
+    }
+
+    #[test]
+    fn maps_signal_to_forced_shutdown_exit_code() {
+        assert_eq!(signal_exit_code(SIGINT), 130);
+        assert_eq!(signal_exit_code(SIGTERM), 143);
     }
 
     #[test]
