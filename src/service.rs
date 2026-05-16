@@ -19,6 +19,8 @@ pub fn run() -> Result<(), Box<dyn Error>> {
                 "received shutdown signal {}; stopping control loop and exiting",
                 signal_name(s)
             );
+            // Keep the signal handler registered while stop() resumes any stopped target.
+            // A second shutdown signal should not interrupt the resume path and leave it stopped.
             let shutdown_result = control::stop();
             if let Err(err) = &shutdown_result {
                 eprintln!("failed to stop control loop cleanly: {err}");
