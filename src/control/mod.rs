@@ -28,6 +28,8 @@ use types::{ActiveTarget, ControlDecision, EstimatedState, RawObservation};
 
 static STOP_SIGNAL: AtomicBool = AtomicBool::new(false);
 static ACTIVE_TARGET: Mutex<Option<ActiveTarget>> = Mutex::new(None);
+#[cfg(test)]
+static TEST_LOCK: Mutex<()> = Mutex::new(());
 
 const CONTROL_PERIOD: Duration = sysinfo::MINIMUM_CPU_UPDATE_INTERVAL;
 
@@ -263,12 +265,7 @@ fn compute_control_decision(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{
-        sync::{Mutex, MutexGuard},
-        time::Instant,
-    };
-
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
+    use std::{sync::MutexGuard, time::Instant};
 
     struct GlobalStateGuard {
         _lock: MutexGuard<'static, ()>,
