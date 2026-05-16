@@ -65,8 +65,8 @@ impl Estimator {
         let valid = warmed_up;
         let timed_out = false;
 
+        self.last_good_normalized = Some(clamped_cpu);
         if valid {
-            self.last_good_normalized = Some(clamped_cpu);
             self.last_good_filtered = Some(filtered_cpu);
         }
 
@@ -220,6 +220,29 @@ mod tests {
         assert!(warmed.valid);
         assert_eq!(warmed.normalized_cpu, 210.0);
         assert!(warmed.filtered_cpu > 0.0);
+    }
+
+    #[test]
+    fn clamps_second_warmup_sample_against_first_observation() {
+        let mut estimator = Estimator::new(Duration::from_millis(500));
+        let base = Instant::now();
+
+        let first = RawObservation {
+            timestamp: base,
+            per_pid_cpu: vec![(1, 10.0)],
+            process_count: 1,
+        };
+        let second = RawObservation {
+            timestamp: base + Duration::from_millis(500),
+            per_pid_cpu: vec![(1, 1000.0)],
+            process_count: 1,
+        };
+
+        let _ = estimator.update(Some(&first));
+        let warmed = estimator.update(Some(&second));
+
+        assert!(warmed.valid);
+        assert_eq!(warmed.normalized_cpu, 10.0 + MAX_JUMP_PER_SAMPLE);
     }
 
     #[test]
