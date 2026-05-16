@@ -13,7 +13,7 @@ darwin-libproc = "0.2.0"
 darwin-libproc-sys = "0.2.0"
 
 [package.metadata.docs.rs]
-targets = ["x86_64-apple-darwin"]
+targets = ["aarch64-apple-darwin"]
 
 [profile.dev]
 opt-level = 0
