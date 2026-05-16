@@ -24,6 +24,9 @@ pub fn run() -> Result<(), Box<dyn Error>> {
                     "received second shutdown signal {}; exiting immediately",
                     signal_name(s)
                 );
+                if let Err(err) = control::resume_before_forced_exit() {
+                    eprintln!("failed to resume target before forced exit: {err}");
+                }
                 process::exit(signal_exit_code(s));
             }
 

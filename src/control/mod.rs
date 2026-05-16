@@ -130,6 +130,17 @@ pub fn stop() -> Result<(), ControlError> {
     Ok(())
 }
 
+pub fn resume_before_forced_exit() -> Result<(), ControlError> {
+    resume_before_forced_exit_with(resume_tracked_members)
+}
+
+fn resume_before_forced_exit_with<F>(resume: F) -> Result<(), ControlError>
+where
+    F: FnOnce(ActiveTarget) -> std::io::Result<()>,
+{
+    try_resume_active_target_with(resume).map_err(ControlError::ResumeFailed)
+}
+
 fn get_args() -> Result<Args, ControlError> {
     let args: Vec<String> = env::args().collect();
     parse_args(&args)
@@ -422,5 +433,16 @@ mod tests {
 
         assert!(result.is_err());
         assert_eq!(current_active_target(), Some(active_target));
+    }
+
+    #[test]
+    fn resume_before_forced_exit_clears_active_target_on_success() {
+        let _guard = GlobalStateGuard::acquire();
+        set_active_target(ActiveTarget {
+            stopped_pgid: Some(1),
+        });
+
+        assert!(resume_before_forced_exit_with(|_| Ok(())).is_ok());
+        assert!(current_active_target().is_none());
     }
 }
