@@ -176,10 +176,20 @@ fn bsd_info(pid: i32) -> io::Result<darwin_libproc::proc_bsdinfo> {
         )
     };
 
+    normalize_bsd_info_result(result, size)?;
+
+    unsafe { Ok(info.assume_init()) }
+}
+
+fn normalize_bsd_info_result(result: libc::c_int, expected_size: libc::c_int) -> io::Result<()> {
     match result {
-        value if value <= 0 => Err(io::Error::last_os_error()),
-        value if value != size => Err(io::Error::other("invalid value returned")),
-        _ => unsafe { Ok(info.assume_init()) },
+        value if value < 0 => Err(io::Error::last_os_error()),
+        0 => Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "proc_pidinfo returned no BSD process info",
+        )),
+        value if value != expected_size => Err(io::Error::other("invalid value returned")),
+        _ => Ok(()),
     }
 }
 
@@ -267,6 +277,23 @@ mod tests {
         .expect_err("permission errors should propagate");
 
         assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
+    }
+
+    #[test]
+    fn zero_byte_bsd_info_result_is_deterministic_not_found() {
+        let err = normalize_bsd_info_result(0, 128)
+            .expect_err("zero-byte result should be treated as missing process info");
+
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
+        assert_eq!(err.to_string(), "proc_pidinfo returned no BSD process info");
+    }
+
+    #[test]
+    fn short_bsd_info_result_is_rejected() {
+        let err =
+            normalize_bsd_info_result(64, 128).expect_err("short result should not be accepted");
+
+        assert_eq!(err.to_string(), "invalid value returned");
     }
 
     #[test]
