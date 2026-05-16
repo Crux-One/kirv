@@ -14,7 +14,7 @@ cargo run --release -- <pid> <percentage>
 ```
 
 - `<pid>`: A process ID belonging to the process group you want to limit.
-- `<percentage>`: Target CPU usage for the process group, from `1` to `99`, measured as a percentage of one logical CPU.
+- `<percentage>`: Target `ps`/`top`-style CPU usage for the process group, from `1` to `99`.
 
 KIRV resolves the process group for the given PID and controls all live processes in that group.
 

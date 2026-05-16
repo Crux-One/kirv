@@ -92,7 +92,7 @@ pub fn start() -> Result<(), Box<dyn Error>> {
 
     println!("target pid: {}", target.root.pid);
     println!("target pgid: {}", target.pgid);
-    println!("throttle: {}% of one logical CPU", args.throttle);
+    println!("throttle: {}% group CPU (ps/top-style)", args.throttle);
 
     loop {
         if STOP_SIGNAL.load(Ordering::SeqCst) {
