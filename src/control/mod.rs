@@ -64,9 +64,7 @@ impl Args {
     }
 }
 
-struct ActiveGroupGuard {
-    _private: (),
-}
+struct ActiveGroupGuard;
 
 impl Drop for ActiveGroupGuard {
     fn drop(&mut self) {
@@ -83,7 +81,7 @@ pub fn start() -> Result<(), Box<dyn Error>> {
     let target = recon.resolve_target_group(args.pid)?;
     guard_target_group(target.pgid)?;
     set_active_target(ActiveTarget { stopped_pgid: None });
-    let _active_group_guard = ActiveGroupGuard { _private: () };
+    let _active_group_guard = ActiveGroupGuard;
 
     let mut estimator = Estimator::new(CONTROL_PERIOD);
     let mut marshal = Marshal::new(args.throttle, CONTROL_PERIOD);
