@@ -44,7 +44,9 @@ impl Recon {
     }
 
     pub fn validate_target_group(&self, target: &TargetGroup) -> io::Result<bool> {
-        let Ok(identity) = self.process_identity(target.root.pid) else {
+        let Some(identity) =
+            normalize_process_identity_result(self.process_identity(target.root.pid))?
+        else {
             return Ok(false);
         };
 
@@ -209,6 +211,16 @@ fn normalize_group_pids_result(result: io::Result<Vec<i32>>) -> io::Result<Optio
     }
 }
 
+fn normalize_process_identity_result(
+    result: io::Result<ProcessIdentity>,
+) -> io::Result<Option<ProcessIdentity>> {
+    match result {
+        Ok(identity) => Ok(Some(identity)),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(err),
+    }
+}
+
 fn identity_from_bsd_info(info: &darwin_libproc::proc_bsdinfo) -> ProcessIdentity {
     ProcessIdentity {
         pid: info.pbi_pid as i32,
@@ -237,6 +249,24 @@ mod tests {
         let result = normalize_group_pids_result(Err(io::Error::from(io::ErrorKind::NotFound)));
 
         assert_eq!(result.unwrap(), None);
+    }
+
+    #[test]
+    fn not_found_process_identity_is_treated_as_missing() {
+        let result =
+            normalize_process_identity_result(Err(io::Error::from(io::ErrorKind::NotFound)));
+
+        assert_eq!(result.unwrap(), None);
+    }
+
+    #[test]
+    fn process_identity_errors_other_than_not_found_are_propagated() {
+        let err = normalize_process_identity_result(Err(io::Error::from(
+            io::ErrorKind::PermissionDenied,
+        )))
+        .expect_err("permission errors should propagate");
+
+        assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
     }
 
     #[test]
