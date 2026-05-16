@@ -40,9 +40,9 @@ impl Reporter {
 
     fn should_emit(&self) -> bool {
         self.enabled
-            && !self
+            && self
                 .last_emit_at
-                .is_some_and(|last_emit_at| last_emit_at.elapsed() < Duration::from_secs(1))
+                .is_none_or(|last_emit_at| last_emit_at.elapsed() >= Duration::from_secs(1))
     }
 }
 
