@@ -90,8 +90,6 @@ pub fn start() -> Result<(), Box<dyn Error>> {
     let enforcer = Enforcer::new();
     let mut reporter = Reporter::new();
 
-    enforcer.resume_group(target.pgid)?;
-
     println!("target pid: {}", target.root.pid);
     println!("target pgid: {}", target.pgid);
     println!("throttle: {}% of one logical CPU", args.throttle);
