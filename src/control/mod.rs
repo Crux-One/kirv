@@ -123,11 +123,15 @@ pub fn start() -> Result<(), Box<dyn Error>> {
 }
 
 pub fn stop() -> Result<(), ControlError> {
-    switch_stop_signal();
+    request_stop();
 
     try_resume_active_target().map_err(ControlError::ResumeFailed)?;
 
     Ok(())
+}
+
+pub fn request_stop() {
+    switch_stop_signal();
 }
 
 pub fn resume_before_forced_exit() -> Result<(), ControlError> {

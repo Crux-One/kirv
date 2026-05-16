@@ -4,7 +4,6 @@ use std::any::Any;
 use std::error::Error;
 use std::io;
 use std::process;
-use std::sync::mpsc;
 use std::thread;
 
 use crate::control;
@@ -12,8 +11,6 @@ use crate::control;
 pub fn run() -> Result<(), Box<dyn Error>> {
     let mut signals = Signals::new([SIGINT, SIGTERM, SIGHUP])?;
     let handle = signals.handle();
-    let (shutdown_tx, shutdown_rx) = mpsc::channel();
-    let (shutdown_started_tx, shutdown_started_rx) = mpsc::channel();
 
     let signal_thread = thread::spawn(move || {
         let mut shutdown_started = false;
@@ -31,20 +28,11 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             }
 
             shutdown_started = true;
-            let _ = shutdown_started_tx.send(());
             println!(
                 "received shutdown signal {}; stopping control loop and exiting",
                 signal_name(s)
             );
-
-            let shutdown_tx = shutdown_tx.clone();
-            thread::spawn(move || {
-                let shutdown_result = control::stop();
-                if let Err(err) = &shutdown_result {
-                    eprintln!("failed to stop control loop cleanly: {err}");
-                }
-                let _ = shutdown_tx.send(shutdown_result);
-            });
+            control::request_stop();
         }
     });
 
@@ -59,16 +47,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         )));
     }
 
-    let shutdown_result = match shutdown_started_rx.try_recv() {
-        Ok(()) => shutdown_rx
-            .recv()
-            .map_err(|err| -> Box<dyn Error> { Box::new(err) })?
-            .map_err(|err| -> Box<dyn Error> { Box::new(err) }),
-        Err(_) => Ok(()),
-    };
-
-    control_result?;
-    shutdown_result
+    control_result
 }
 
 fn signal_name(signal: i32) -> &'static str {
