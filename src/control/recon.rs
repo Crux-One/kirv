@@ -1,6 +1,7 @@
 use super::types::{ProcessIdentity, RawObservation, TargetGroup};
-use darwin_libproc::{pgrp_only_pids, task_all_info};
-use std::{error::Error, io, time::Instant};
+use darwin_libproc::pgrp_only_pids;
+use nix::libc;
+use std::{error::Error, io, mem, time::Instant};
 use sysinfo::{Pid, ProcessRefreshKind, RefreshKind, System};
 
 pub struct Recon {
@@ -13,7 +14,18 @@ impl Recon {
     }
 
     pub fn resolve_target_group(&mut self, pid: i32) -> Result<TargetGroup, Box<dyn Error>> {
-        let identity = self.process_identity(pid)?;
+        let info = bsd_info(pid).map_err(|err| {
+            if err.kind() == io::ErrorKind::PermissionDenied {
+                Box::new(ProcessAccessError {
+                    pid,
+                    current_uid: current_uid(),
+                }) as Box<dyn Error>
+            } else {
+                Box::new(err) as Box<dyn Error>
+            }
+        })?;
+        ensure_process_owner(&info)?;
+        let identity = identity_from_bsd_info(&info);
         let pgid = identity.pgid;
 
         if pgid <= 0 {
@@ -27,8 +39,8 @@ impl Recon {
     }
 
     pub fn process_identity(&self, pid: i32) -> io::Result<ProcessIdentity> {
-        let info = task_all_info(pid)?;
-        Ok(identity_from_task_info(&info))
+        let info = bsd_info(pid)?;
+        Ok(identity_from_bsd_info(&info))
     }
 
     pub fn validate_target_group(&self, target: &TargetGroup) -> io::Result<bool> {
@@ -94,6 +106,81 @@ impl Default for Recon {
     }
 }
 
+#[derive(Debug)]
+struct ProcessOwnerError {
+    target_uid: u32,
+    current_uid: u32,
+}
+
+impl std::fmt::Display for ProcessOwnerError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "target process is owned by uid {}, current user is uid {}",
+            self.target_uid, self.current_uid
+        )
+    }
+}
+
+impl Error for ProcessOwnerError {}
+
+#[derive(Debug)]
+struct ProcessAccessError {
+    pid: i32,
+    current_uid: u32,
+}
+
+impl std::fmt::Display for ProcessAccessError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "target process {} is not readable by current user uid {}; it may be owned by another user",
+            self.pid, self.current_uid
+        )
+    }
+}
+
+impl Error for ProcessAccessError {}
+
+fn ensure_process_owner(info: &darwin_libproc::proc_bsdinfo) -> Result<(), ProcessOwnerError> {
+    let target_uid = info.pbi_uid;
+    let current_uid = current_uid();
+
+    if target_uid != current_uid {
+        return Err(ProcessOwnerError {
+            target_uid,
+            current_uid,
+        });
+    }
+
+    Ok(())
+}
+
+fn current_uid() -> u32 {
+    unsafe { libc::getuid() }
+}
+
+fn bsd_info(pid: i32) -> io::Result<darwin_libproc::proc_bsdinfo> {
+    let mut info = mem::MaybeUninit::<darwin_libproc::proc_bsdinfo>::uninit();
+    let size = mem::size_of::<darwin_libproc::proc_bsdinfo>() as libc::c_int;
+
+    let result = unsafe {
+        darwin_libproc_sys::proc_pidinfo(
+            pid,
+            darwin_libproc_sys::PROC_PIDTBSDINFO,
+            0,
+            info.as_mut_ptr().cast(),
+            size,
+        )
+    };
+
+    match result {
+        value if value <= 0 => Err(io::Error::last_os_error()),
+        value if value != size => Err(io::Error::other("invalid value returned")),
+        _ => unsafe { Ok(info.assume_init()) },
+    }
+}
+
 fn group_has_live_members(pids: &[i32]) -> bool {
     pids.iter().any(|pid| *pid > 0)
 }
@@ -122,20 +209,18 @@ fn normalize_group_pids_result(result: io::Result<Vec<i32>>) -> io::Result<Optio
     }
 }
 
-fn identity_from_task_info(info: &darwin_libproc::proc_taskallinfo) -> ProcessIdentity {
+fn identity_from_bsd_info(info: &darwin_libproc::proc_bsdinfo) -> ProcessIdentity {
     ProcessIdentity {
-        pid: info.pbsd.pbi_pid as i32,
-        pgid: info.pbsd.pbi_pgid as i32,
-        start_tvsec: info.pbsd.pbi_start_tvsec,
-        start_tvusec: info.pbsd.pbi_start_tvusec,
+        pid: info.pbi_pid as i32,
+        pgid: info.pbi_pgid as i32,
+        start_tvsec: info.pbi_start_tvsec,
+        start_tvusec: info.pbi_start_tvusec,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nix::libc;
-
     #[test]
     fn group_with_positive_pid_is_treated_as_alive() {
         assert!(group_has_live_members(&[0, -1, 123]));
@@ -163,63 +248,77 @@ mod tests {
         assert!(members.is_empty());
     }
 
+    fn bsd_info_fixture(uid: u32) -> darwin_libproc::proc_bsdinfo {
+        darwin_libproc::proc_bsdinfo {
+            pbi_flags: 0,
+            pbi_status: 0,
+            pbi_xstatus: 0,
+            pbi_pid: 42,
+            pbi_ppid: 1,
+            pbi_uid: uid,
+            pbi_gid: 0,
+            pbi_ruid: 0,
+            pbi_rgid: 0,
+            pbi_svuid: 0,
+            pbi_svgid: 0,
+            rfu_1: 0,
+            pbi_comm: [0; libc::MAXCOMLEN],
+            pbi_name: [0; 2 * libc::MAXCOMLEN],
+            pbi_nfiles: 0,
+            pbi_pgid: 77,
+            pbi_pjobc: 0,
+            e_tdev: 0,
+            e_tpgid: 0,
+            pbi_nice: 0,
+            pbi_start_tvsec: 123,
+            pbi_start_tvusec: 456,
+        }
+    }
+
     #[test]
-    fn converts_task_info_to_process_identity() {
-        let info = darwin_libproc::proc_taskallinfo {
-            pbsd: darwin_libproc::proc_bsdinfo {
-                pbi_flags: 0,
-                pbi_status: 0,
-                pbi_xstatus: 0,
-                pbi_pid: 42,
-                pbi_ppid: 1,
-                pbi_uid: 0,
-                pbi_gid: 0,
-                pbi_ruid: 0,
-                pbi_rgid: 0,
-                pbi_svuid: 0,
-                pbi_svgid: 0,
-                rfu_1: 0,
-                pbi_comm: [0; libc::MAXCOMLEN],
-                pbi_name: [0; 2 * libc::MAXCOMLEN],
-                pbi_nfiles: 0,
-                pbi_pgid: 77,
-                pbi_pjobc: 0,
-                e_tdev: 0,
-                e_tpgid: 0,
-                pbi_nice: 0,
-                pbi_start_tvsec: 123,
-                pbi_start_tvusec: 456,
-            },
-            ptinfo: darwin_libproc::proc_taskinfo {
-                pti_virtual_size: 0,
-                pti_resident_size: 0,
-                pti_total_user: 0,
-                pti_total_system: 0,
-                pti_threads_user: 0,
-                pti_threads_system: 0,
-                pti_policy: 0,
-                pti_faults: 0,
-                pti_pageins: 0,
-                pti_cow_faults: 0,
-                pti_messages_sent: 0,
-                pti_messages_received: 0,
-                pti_syscalls_mach: 0,
-                pti_syscalls_unix: 0,
-                pti_csw: 0,
-                pti_threadnum: 0,
-                pti_numrunning: 0,
-                pti_priority: 0,
-            },
-        };
+    fn converts_bsd_info_to_process_identity() {
+        let info = bsd_info_fixture(0);
 
         assert_eq!(
-            identity_from_task_info(&info),
+            identity_from_bsd_info(&info),
             ProcessIdentity {
                 pid: 42,
                 pgid: 77,
                 start_tvsec: 123,
                 start_tvusec: 456,
             }
+        );
+    }
+
+    #[test]
+    fn accepts_process_owned_by_current_user() {
+        let mut info = bsd_info_fixture(current_uid());
+
+        assert!(ensure_process_owner(&info).is_ok());
+
+        info.pbi_uid = current_uid().saturating_add(1);
+        let err = ensure_process_owner(&info).expect_err("owner mismatch should be rejected");
+
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "target process is owned by uid {}, current user is uid {}",
+                info.pbi_uid,
+                current_uid()
+            )
+        );
+    }
+
+    #[test]
+    fn process_access_error_explains_permission_denied_context() {
+        let err = ProcessAccessError {
+            pid: 42,
+            current_uid: 501,
+        };
+
+        assert_eq!(
+            err.to_string(),
+            "target process 42 is not readable by current user uid 501; it may be owned by another user"
         );
     }
 

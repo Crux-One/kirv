@@ -92,6 +92,7 @@ name = "kirv"
 version = "0.1.0"
 dependencies = [
  "darwin-libproc",
+ "darwin-libproc-sys",
  "nix",
  "signal-hook",
  "sysinfo",
