@@ -54,7 +54,11 @@ impl Recon {
             return Ok(false);
         }
 
-        Ok(raw_group_pids(target.pgid)?.is_some_and(|pids| group_has_live_members(&pids)))
+        let Some(pids) = raw_group_pids(target.pgid)? else {
+            return Ok(false);
+        };
+
+        Ok(group_contains_pid(&pids, target.root.pid) && group_has_live_members(&pids))
     }
 
     pub fn observe_group(&mut self, target: &TargetGroup) -> io::Result<Option<RawObservation>> {
@@ -197,6 +201,10 @@ fn group_has_live_members(pids: &[i32]) -> bool {
     pids.iter().any(|pid| *pid > 0)
 }
 
+fn group_contains_pid(pids: &[i32], target_pid: i32) -> bool {
+    pids.contains(&target_pid)
+}
+
 fn same_process_identity(expected: ProcessIdentity, actual: ProcessIdentity) -> bool {
     expected == actual
 }
@@ -252,6 +260,12 @@ mod tests {
     fn group_without_positive_pids_is_treated_as_dead() {
         assert!(!group_has_live_members(&[]));
         assert!(!group_has_live_members(&[0, -1]));
+    }
+
+    #[test]
+    fn group_contains_pid_requires_target_pid() {
+        assert!(group_contains_pid(&[1, 42, 99], 42));
+        assert!(!group_contains_pid(&[1, 99], 42));
     }
 
     #[test]
