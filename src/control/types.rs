@@ -16,6 +16,7 @@ pub struct TargetGroup {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ActiveTarget {
+    pub pgid: i32,
     pub stopped_pgid: Option<i32>,
 }
 

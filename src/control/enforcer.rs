@@ -219,7 +219,10 @@ mod tests {
             stop_duration: Duration::from_millis(25),
         };
         let mut sender = FakeSignalSender::default();
-        super::super::set_active_target(ActiveTarget { stopped_pgid: None });
+        super::super::set_active_target(ActiveTarget {
+            pgid: target.pgid,
+            stopped_pgid: None,
+        });
         let active_group_guard = super::super::ActiveGroupGuard;
 
         Enforcer::new()
@@ -238,7 +241,10 @@ mod tests {
         assert!(sender.process_signals.is_empty());
         assert_eq!(
             super::super::current_active_target(),
-            Some(ActiveTarget { stopped_pgid: None })
+            Some(ActiveTarget {
+                pgid: target.pgid,
+                stopped_pgid: None
+            })
         );
 
         drop(active_group_guard);

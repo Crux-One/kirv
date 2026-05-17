@@ -84,7 +84,10 @@ pub fn start() -> Result<(), Box<dyn Error>> {
     let mut recon = Recon::new();
     let target = recon.resolve_target_group(args.pid)?;
     guard_target_group(target.pgid)?;
-    try_set_active_target(ActiveTarget { stopped_pgid: None })?;
+    try_set_active_target(ActiveTarget {
+        pgid: target.pgid,
+        stopped_pgid: None,
+    })?;
     let _active_group_guard = ActiveGroupGuard;
 
     let mut estimator = Estimator::new(CONTROL_PERIOD);
@@ -137,14 +140,19 @@ pub fn request_stop() {
 }
 
 pub fn resume_before_forced_exit() -> Result<(), ControlError> {
-    resume_before_forced_exit_with(resume_tracked_members)
+    resume_before_forced_exit_with(resume_tracked_members, resume_target_group)
 }
 
-fn resume_before_forced_exit_with<F>(resume: F) -> Result<(), ControlError>
+fn resume_before_forced_exit_with<F, G>(
+    resume_tracked: F,
+    resume_target: G,
+) -> Result<(), ControlError>
 where
     F: FnOnce(ActiveTarget) -> std::io::Result<()>,
+    G: FnOnce(i32) -> std::io::Result<()>,
 {
-    try_resume_active_target_with(resume).map_err(ControlError::ResumeFailed)
+    try_resume_active_target_before_forced_exit_with(resume_tracked, resume_target)
+        .map_err(ControlError::ResumeFailed)
 }
 
 fn get_args() -> Result<Args, ControlError> {
@@ -269,6 +277,41 @@ fn resume_tracked_members(active_target: ActiveTarget) -> std::io::Result<()> {
                     "failed to resume target group: {group_err}; fallback resume by pid failed: {pid_err}"
                 )))
         }
+    }
+}
+
+fn resume_target_group(pgid: i32) -> std::io::Result<()> {
+    Enforcer::new().resume_group(pgid)
+}
+
+fn try_resume_active_target_before_forced_exit_with<F, G>(
+    resume_tracked: F,
+    resume_target: G,
+) -> std::io::Result<()>
+where
+    F: FnOnce(ActiveTarget) -> std::io::Result<()>,
+    G: FnOnce(i32) -> std::io::Result<()>,
+{
+    let Some(active_target) = current_active_target() else {
+        return Ok(());
+    };
+
+    let target_pgid = active_target.pgid;
+    let tracked_result = resume_tracked(active_target.clone());
+    let target_result = resume_target(target_pgid);
+
+    match (tracked_result, target_result) {
+        (Ok(()), Ok(())) => {
+            let mut slot = ACTIVE_TARGET.lock().expect("active target mutex poisoned");
+            if slot.as_ref() == Some(&active_target) {
+                *slot = None;
+            }
+            Ok(())
+        }
+        (Err(err), Ok(())) | (Ok(()), Err(err)) => Err(err),
+        (Err(tracked_err), Err(target_err)) => Err(std::io::Error::other(format!(
+            "failed to resume tracked target members: {tracked_err}; forced target group resume failed: {target_err}"
+        ))),
     }
 }
 
@@ -424,13 +467,18 @@ mod tests {
 
     #[test]
     fn resume_tracked_members_skips_empty_stopped_group() {
-        assert!(resume_tracked_members(ActiveTarget { stopped_pgid: None }).is_ok());
+        assert!(resume_tracked_members(ActiveTarget {
+            pgid: 1,
+            stopped_pgid: None
+        })
+        .is_ok());
     }
 
     #[test]
     fn try_resume_active_target_clears_slot_on_success() {
         let _guard = GlobalStateGuard::acquire();
         set_active_target(ActiveTarget {
+            pgid: 1,
             stopped_pgid: Some(1),
         });
 
@@ -442,6 +490,7 @@ mod tests {
     fn try_resume_active_target_keeps_slot_on_failure() {
         let _guard = GlobalStateGuard::acquire();
         let active_target = ActiveTarget {
+            pgid: 1,
             stopped_pgid: Some(1),
         };
         set_active_target(active_target.clone());
@@ -456,11 +505,15 @@ mod tests {
     fn try_set_active_target_rejects_existing_active_target() {
         let _guard = GlobalStateGuard::acquire();
         let active_target = ActiveTarget {
+            pgid: 1,
             stopped_pgid: Some(1),
         };
         set_active_target(active_target.clone());
 
-        let result = try_set_active_target(ActiveTarget { stopped_pgid: None });
+        let result = try_set_active_target(ActiveTarget {
+            pgid: 2,
+            stopped_pgid: None,
+        });
 
         assert!(matches!(result, Err(ControlError::ActiveTargetAlreadySet)));
         assert_eq!(current_active_target(), Some(active_target));
@@ -470,10 +523,36 @@ mod tests {
     fn resume_before_forced_exit_clears_active_target_on_success() {
         let _guard = GlobalStateGuard::acquire();
         set_active_target(ActiveTarget {
+            pgid: 1,
             stopped_pgid: Some(1),
         });
 
-        assert!(resume_before_forced_exit_with(|_| Ok(())).is_ok());
+        assert!(resume_before_forced_exit_with(|_| Ok(()), |_| Ok(())).is_ok());
+        assert!(current_active_target().is_none());
+    }
+
+    #[test]
+    fn resume_before_forced_exit_resumes_target_group_even_without_stopped_group() {
+        let _guard = GlobalStateGuard::acquire();
+        set_active_target(ActiveTarget {
+            pgid: 42,
+            stopped_pgid: None,
+        });
+        let mut resumed_target = None;
+
+        assert!(resume_before_forced_exit_with(
+            |active_target| {
+                assert_eq!(active_target.stopped_pgid, None);
+                Ok(())
+            },
+            |pgid| {
+                resumed_target = Some(pgid);
+                Ok(())
+            }
+        )
+        .is_ok());
+
+        assert_eq!(resumed_target, Some(42));
         assert!(current_active_target().is_none());
     }
 }
