@@ -44,6 +44,7 @@ pub enum ControlError {
     InvalidArguments(&'static str),
     InvalidPid(std::num::ParseIntError),
     InvalidThrottle(std::num::ParseFloatError),
+    ActiveTargetAlreadySet,
     ResumeFailed(std::io::Error),
 }
 
@@ -53,6 +54,7 @@ impl fmt::Display for ControlError {
             Self::InvalidArguments(msg) => write!(f, "{msg}"),
             Self::InvalidPid(err) => write!(f, "invalid pid: {err}"),
             Self::InvalidThrottle(err) => write!(f, "invalid throttle percentage: {err}"),
+            Self::ActiveTargetAlreadySet => write!(f, "control loop is already active"),
             Self::ResumeFailed(err) => write!(f, "failed to resume target process group: {err}"),
         }
     }
@@ -82,7 +84,7 @@ pub fn start() -> Result<(), Box<dyn Error>> {
     let mut recon = Recon::new();
     let target = recon.resolve_target_group(args.pid)?;
     guard_target_group(target.pgid)?;
-    set_active_target(ActiveTarget { stopped_pgid: None });
+    try_set_active_target(ActiveTarget { stopped_pgid: None })?;
     let _active_group_guard = ActiveGroupGuard;
 
     let mut estimator = Estimator::new(CONTROL_PERIOD);
@@ -192,9 +194,20 @@ fn stop_requested() -> bool {
     STOP_SIGNAL.load(Ordering::SeqCst)
 }
 
+#[cfg(test)]
 fn set_active_target(active_target: ActiveTarget) {
     let mut slot = ACTIVE_TARGET.lock().expect("active target mutex poisoned");
     *slot = Some(active_target);
+}
+
+fn try_set_active_target(active_target: ActiveTarget) -> Result<(), ControlError> {
+    let mut slot = ACTIVE_TARGET.lock().expect("active target mutex poisoned");
+    if slot.is_some() {
+        return Err(ControlError::ActiveTargetAlreadySet);
+    }
+
+    *slot = Some(active_target);
+    Ok(())
 }
 
 fn set_stopped_group(pgid: i32) {
@@ -436,6 +449,20 @@ mod tests {
         let result = try_resume_active_target_with(|_| Err(std::io::Error::other("resume failed")));
 
         assert!(result.is_err());
+        assert_eq!(current_active_target(), Some(active_target));
+    }
+
+    #[test]
+    fn try_set_active_target_rejects_existing_active_target() {
+        let _guard = GlobalStateGuard::acquire();
+        let active_target = ActiveTarget {
+            stopped_pgid: Some(1),
+        };
+        set_active_target(active_target.clone());
+
+        let result = try_set_active_target(ActiveTarget { stopped_pgid: None });
+
+        assert!(matches!(result, Err(ControlError::ActiveTargetAlreadySet)));
         assert_eq!(current_active_target(), Some(active_target));
     }
 
