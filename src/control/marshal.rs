@@ -51,7 +51,6 @@ impl Marshal {
             self.integral = 0.0;
             0.0
         } else if estimated.filtered_cpu <= self.setpoint + DEAD_BAND_PERCENT {
-            self.integral = 0.0;
             self.prev_output
         } else {
             let error = estimated.filtered_cpu - self.setpoint;
@@ -205,7 +204,7 @@ mod tests {
     }
 
     #[test]
-    fn keeps_previous_output_inside_dead_band() {
+    fn keeps_previous_output_and_integral_inside_dead_band() {
         let control_period = Duration::from_millis(500);
         let mut marshal = Marshal {
             kp: 0.0,
@@ -227,7 +226,7 @@ mod tests {
         let expected = Duration::from_millis(90);
         let delta = decision.stop_duration.abs_diff(expected);
         assert!(delta <= Duration::from_micros(100));
-        assert_eq!(marshal.integral, 0.0);
+        assert_eq!(marshal.integral, 10.0);
     }
 
     #[test]
@@ -253,5 +252,28 @@ mod tests {
         let expected = Duration::from_millis(360);
         let delta = decision.stop_duration.abs_diff(expected);
         assert!(delta <= Duration::from_micros(100));
+    }
+
+    #[test]
+    fn resets_integral_when_usage_drops_below_dead_band() {
+        let control_period = Duration::from_millis(500);
+        let mut marshal = Marshal {
+            kp: 0.0,
+            ki: 0.0,
+            setpoint: 20.0,
+            integral: 10.0,
+            prev_output: 0.8,
+            control_period,
+        };
+        let _ = marshal.decide(&EstimatedState {
+            normalized_cpu: 5.0,
+            filtered_cpu: 5.0,
+            dt: control_period,
+            valid: true,
+            warmed_up: true,
+            timed_out: false,
+        });
+
+        assert_eq!(marshal.integral, 0.0);
     }
 }
