@@ -112,7 +112,7 @@ impl Recon {
 impl Default for Recon {
     fn default() -> Self {
         Self {
-            sys: System::new_with_specifics(RefreshKind::new().without_memory().without_cpu()),
+            sys: System::new_with_specifics(RefreshKind::new()),
             cpu_primed: false,
         }
     }
