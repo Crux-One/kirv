@@ -47,8 +47,8 @@ impl Marshal {
             };
         }
 
-        let target_output = if estimated.filtered_cpu < self.setpoint - DEAD_BAND_PERCENT {
-            self.integral = 0.0;
+        let below_dead_band = estimated.filtered_cpu < self.setpoint - DEAD_BAND_PERCENT;
+        let target_output = if below_dead_band {
             0.0
         } else if estimated.filtered_cpu <= self.setpoint + DEAD_BAND_PERCENT {
             self.prev_output
@@ -62,6 +62,9 @@ impl Marshal {
             (base_stop_fraction + correction).clamp(0.0, MAX_STOP_FRACTION)
         };
         let output = limit_output_step(self.prev_output, target_output);
+        if below_dead_band && output == 0.0 {
+            self.integral = 0.0;
+        }
         self.prev_output = output;
 
         ControlDecision {
@@ -255,7 +258,7 @@ mod tests {
     }
 
     #[test]
-    fn resets_integral_when_usage_drops_below_dead_band() {
+    fn keeps_integral_while_output_ramps_down_below_dead_band() {
         let control_period = Duration::from_millis(500);
         let mut marshal = Marshal {
             kp: 0.0,
@@ -263,6 +266,29 @@ mod tests {
             setpoint: 20.0,
             integral: 10.0,
             prev_output: 0.8,
+            control_period,
+        };
+        let _ = marshal.decide(&EstimatedState {
+            normalized_cpu: 5.0,
+            filtered_cpu: 5.0,
+            dt: control_period,
+            valid: true,
+            warmed_up: true,
+            timed_out: false,
+        });
+
+        assert_eq!(marshal.integral, 10.0);
+    }
+
+    #[test]
+    fn resets_integral_when_output_reaches_zero_below_dead_band() {
+        let control_period = Duration::from_millis(500);
+        let mut marshal = Marshal {
+            kp: 0.0,
+            ki: 0.0,
+            setpoint: 20.0,
+            integral: 10.0,
+            prev_output: 0.04,
             control_period,
         };
         let _ = marshal.decide(&EstimatedState {
