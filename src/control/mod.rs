@@ -88,6 +88,7 @@ pub fn start() -> Result<(), Box<dyn Error>> {
         pgid: target.pgid,
         stopped_pgid: None,
     })?;
+    reset_stop_signal();
     let _active_group_guard = ActiveGroupGuard;
 
     let mut estimator = Estimator::new(CONTROL_PERIOD);
@@ -188,6 +189,10 @@ fn guard_target_group(target_pgid: i32) -> Result<(), Box<dyn Error>> {
 
 fn switch_stop_signal() {
     STOP_SIGNAL.store(true, Ordering::SeqCst);
+}
+
+fn reset_stop_signal() {
+    STOP_SIGNAL.store(false, Ordering::SeqCst);
 }
 
 fn stop_requested() -> bool {
@@ -519,6 +524,40 @@ mod tests {
 
         assert!(matches!(result, Err(ControlError::ActiveTargetAlreadySet)));
         assert_eq!(current_active_target(), Some(active_target));
+    }
+
+    #[test]
+    fn reset_stop_signal_allows_new_run_after_active_target_is_set() {
+        let _guard = GlobalStateGuard::acquire();
+        stop();
+        assert!(stop_requested());
+
+        try_set_active_target(ActiveTarget {
+            pgid: 1,
+            stopped_pgid: None,
+        })
+        .expect("active target should be set");
+        reset_stop_signal();
+
+        assert!(!stop_requested());
+    }
+
+    #[test]
+    fn failed_reentry_does_not_clear_pending_stop_signal() {
+        let _guard = GlobalStateGuard::acquire();
+        set_active_target(ActiveTarget {
+            pgid: 1,
+            stopped_pgid: None,
+        });
+        stop();
+
+        let result = try_set_active_target(ActiveTarget {
+            pgid: 2,
+            stopped_pgid: None,
+        });
+
+        assert!(matches!(result, Err(ControlError::ActiveTargetAlreadySet)));
+        assert!(stop_requested());
     }
 
     #[test]
