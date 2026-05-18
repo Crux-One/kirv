@@ -6,6 +6,7 @@ use sysinfo::{Pid, ProcessRefreshKind, RefreshKind, System};
 
 pub struct Recon {
     sys: System,
+    cpu_primed: bool,
 }
 
 impl Recon {
@@ -83,6 +84,10 @@ impl Recon {
         self.sys
             .refresh_pids_specifics(&sys_pids, ProcessRefreshKind::new().with_cpu());
 
+        if should_discard_cpu_sample(&mut self.cpu_primed) {
+            return Ok(None);
+        }
+
         let per_pid_cpu = pids
             .into_iter()
             .filter(|pid| *pid > 0)
@@ -108,6 +113,7 @@ impl Default for Recon {
     fn default() -> Self {
         Self {
             sys: System::new_with_specifics(RefreshKind::new().without_memory().without_cpu()),
+            cpu_primed: false,
         }
     }
 }
@@ -209,6 +215,15 @@ fn same_process_identity(expected: ProcessIdentity, actual: ProcessIdentity) -> 
     expected == actual
 }
 
+fn should_discard_cpu_sample(cpu_primed: &mut bool) -> bool {
+    if *cpu_primed {
+        false
+    } else {
+        *cpu_primed = true;
+        true
+    }
+}
+
 fn raw_group_pids(pgid: i32) -> io::Result<Option<Vec<i32>>> {
     normalize_group_pids_result(pgrp_only_pids(pgid))
 }
@@ -266,6 +281,22 @@ mod tests {
     fn group_contains_pid_requires_target_pid() {
         assert!(group_contains_pid(&[1, 42, 99], 42));
         assert!(!group_contains_pid(&[1, 99], 42));
+    }
+
+    #[test]
+    fn recon_starts_with_unprimed_cpu_samples() {
+        let recon = Recon::default();
+
+        assert!(!recon.cpu_primed);
+    }
+
+    #[test]
+    fn discards_only_first_cpu_sample_after_refresh() {
+        let mut cpu_primed = false;
+
+        assert!(should_discard_cpu_sample(&mut cpu_primed));
+        assert!(cpu_primed);
+        assert!(!should_discard_cpu_sample(&mut cpu_primed));
     }
 
     #[test]
