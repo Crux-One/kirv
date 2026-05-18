@@ -127,15 +127,7 @@ pub fn start() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-pub fn stop() -> Result<(), ControlError> {
-    request_stop();
-
-    try_resume_active_target().map_err(ControlError::ResumeFailed)?;
-
-    Ok(())
-}
-
-pub fn request_stop() {
+pub fn stop() {
     switch_stop_signal();
 }
 
@@ -457,11 +449,11 @@ mod tests {
     }
 
     #[test]
-    fn stop_requested_reflects_stop_signal_state() {
+    fn stop_sets_stop_signal() {
         let _guard = GlobalStateGuard::acquire();
         assert!(!stop_requested());
 
-        switch_stop_signal();
+        stop();
         assert!(stop_requested());
     }
 

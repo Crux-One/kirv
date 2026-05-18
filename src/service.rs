@@ -32,7 +32,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
                 "received shutdown signal {}; stopping control loop and exiting",
                 signal_name(s)
             );
-            control::request_stop();
+            control::stop();
         }
     });
 
