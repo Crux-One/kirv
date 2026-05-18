@@ -294,22 +294,27 @@ where
     };
 
     let target_pgid = active_target.pgid;
-    let tracked_result = resume_tracked(active_target.clone());
-    let target_result = resume_target(target_pgid);
-
-    match (tracked_result, target_result) {
-        (Ok(()), Ok(())) => {
-            let mut slot = ACTIVE_TARGET.lock().expect("active target mutex poisoned");
-            if slot.as_ref() == Some(&active_target) {
-                *slot = None;
-            }
-            Ok(())
+    let resume_result = if active_target.stopped_pgid.is_some() {
+        match resume_tracked(active_target.clone()) {
+            Ok(()) => Ok(()),
+            Err(tracked_err) => resume_target(target_pgid).map_err(|target_err| {
+                std::io::Error::other(format!(
+                    "failed to resume tracked target members: {tracked_err}; forced target group resume failed: {target_err}"
+                ))
+            }),
         }
-        (Err(err), Ok(())) | (Ok(()), Err(err)) => Err(err),
-        (Err(tracked_err), Err(target_err)) => Err(std::io::Error::other(format!(
-            "failed to resume tracked target members: {tracked_err}; forced target group resume failed: {target_err}"
-        ))),
+    } else {
+        resume_target(target_pgid)
+    };
+
+    resume_result?;
+
+    let mut slot = ACTIVE_TARGET.lock().expect("active target mutex poisoned");
+    if slot.as_ref() == Some(&active_target) {
+        *slot = None;
     }
+
+    Ok(())
 }
 
 fn current_group_pids(pgid: i32) -> std::io::Result<Vec<i32>> {
@@ -525,6 +530,55 @@ mod tests {
         });
 
         assert!(resume_before_forced_exit_with(|_| Ok(()), |_| Ok(())).is_ok());
+        assert!(current_active_target().is_none());
+    }
+
+    #[test]
+    fn resume_before_forced_exit_skips_target_resume_after_tracked_success() {
+        let _guard = GlobalStateGuard::acquire();
+        set_active_target(ActiveTarget {
+            pgid: 42,
+            stopped_pgid: Some(42),
+        });
+        let mut tracked_resume = None;
+        let mut target_resume = None;
+
+        assert!(resume_before_forced_exit_with(
+            |active_target| {
+                tracked_resume = active_target.stopped_pgid;
+                Ok(())
+            },
+            |pgid| {
+                target_resume = Some(pgid);
+                Ok(())
+            }
+        )
+        .is_ok());
+
+        assert_eq!(tracked_resume, Some(42));
+        assert_eq!(target_resume, None);
+        assert!(current_active_target().is_none());
+    }
+
+    #[test]
+    fn resume_before_forced_exit_falls_back_to_target_after_tracked_failure() {
+        let _guard = GlobalStateGuard::acquire();
+        set_active_target(ActiveTarget {
+            pgid: 42,
+            stopped_pgid: Some(42),
+        });
+        let mut target_resume = None;
+
+        assert!(resume_before_forced_exit_with(
+            |_| Err(std::io::Error::other("tracked resume failed")),
+            |pgid| {
+                target_resume = Some(pgid);
+                Ok(())
+            }
+        )
+        .is_ok());
+
+        assert_eq!(target_resume, Some(42));
         assert!(current_active_target().is_none());
     }
 
