@@ -33,7 +33,7 @@ impl Enforcer {
             return Ok(());
         }
 
-        super::set_stopped_group(target.pgid);
+        super::try_set_stopped_group(target.pgid)?;
         if let Err(err) = self.stop_group_with(target.pgid, sender) {
             super::clear_stopped_group();
             return Err(err);
@@ -249,6 +249,23 @@ mod tests {
 
         drop(active_group_guard);
 
+        assert!(super::super::current_active_target().is_none());
+    }
+
+    #[test]
+    fn apply_fails_without_active_target_before_sending_stop() {
+        let _guard = GlobalStateGuard::acquire();
+        let target = target_group(1234);
+        let decision = ControlDecision {
+            stop_duration: Duration::from_millis(25),
+        };
+        let mut sender = FakeSignalSender::default();
+
+        let result = Enforcer::new().apply_with(&target, &decision, &mut sender, |_| {});
+
+        assert!(result.is_err());
+        assert!(sender.group_signals.is_empty());
+        assert!(sender.process_signals.is_empty());
         assert!(super::super::current_active_target().is_none());
     }
 }

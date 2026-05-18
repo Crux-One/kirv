@@ -210,11 +210,16 @@ fn try_set_active_target(active_target: ActiveTarget) -> Result<(), ControlError
     Ok(())
 }
 
-fn set_stopped_group(pgid: i32) {
+fn try_set_stopped_group(pgid: i32) -> std::io::Result<()> {
     let mut slot = ACTIVE_TARGET.lock().expect("active target mutex poisoned");
-    if let Some(active_target) = slot.as_mut() {
-        active_target.stopped_pgid = Some(pgid);
-    }
+    let Some(active_target) = slot.as_mut() else {
+        return Err(std::io::Error::other(
+            "active target must be set before stopping a group",
+        ));
+    };
+
+    active_target.stopped_pgid = Some(pgid);
+    Ok(())
 }
 
 fn clear_stopped_group() {
