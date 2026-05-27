@@ -1,3 +1,4 @@
+mod config;
 mod enforcer;
 mod estimator;
 mod marshal;
@@ -8,7 +9,6 @@ mod wait;
 
 use nix::unistd::getpgrp;
 use std::{
-    env,
     error::Error,
     fmt,
     sync::{
@@ -19,6 +19,7 @@ use std::{
     time::Duration,
 };
 
+use config::ControlConfig;
 use enforcer::Enforcer;
 use estimator::Estimator;
 use marshal::Marshal;
@@ -32,12 +33,6 @@ static ACTIVE_TARGET: Mutex<Option<ActiveTarget>> = Mutex::new(None);
 static TEST_LOCK: Mutex<()> = Mutex::new(());
 
 const CONTROL_PERIOD: Duration = sysinfo::MINIMUM_CPU_UPDATE_INTERVAL;
-
-#[derive(Debug)]
-struct Args {
-    pid: i32,
-    throttle: f32,
-}
 
 #[derive(Debug)]
 pub enum ControlError {
@@ -62,12 +57,6 @@ impl fmt::Display for ControlError {
 
 impl Error for ControlError {}
 
-impl Args {
-    fn new(pid: i32, throttle: f32) -> Self {
-        Self { pid, throttle }
-    }
-}
-
 struct ActiveGroupGuard;
 
 impl Drop for ActiveGroupGuard {
@@ -79,10 +68,12 @@ impl Drop for ActiveGroupGuard {
 }
 
 pub fn start() -> Result<(), Box<dyn Error>> {
-    let args = get_args()?;
+    start_with_config(ControlConfig::from_env()?)
+}
 
+fn start_with_config(config: ControlConfig) -> Result<(), Box<dyn Error>> {
     let mut recon = Recon::new();
-    let target = recon.resolve_target_group(args.pid)?;
+    let target = recon.resolve_target_group(config.pid)?;
     guard_target_group(target.pgid)?;
     try_set_active_target(ActiveTarget {
         pgid: target.pgid,
@@ -92,13 +83,13 @@ pub fn start() -> Result<(), Box<dyn Error>> {
     let _active_group_guard = ActiveGroupGuard;
 
     let mut estimator = Estimator::new(CONTROL_PERIOD);
-    let mut marshal = Marshal::new(args.throttle, CONTROL_PERIOD);
+    let mut marshal = Marshal::new(config.throttle, CONTROL_PERIOD);
     let enforcer = Enforcer::new();
     let mut reporter = Reporter::new();
 
     println!("target pid: {}", target.root.pid);
     println!("target pgid: {}", target.pgid);
-    println!("throttle: {}% group CPU (ps/top-style)", args.throttle);
+    println!("throttle: {}% group CPU (ps/top-style)", config.throttle);
 
     loop {
         if STOP_SIGNAL.load(Ordering::SeqCst) {
@@ -146,36 +137,6 @@ where
 {
     try_resume_active_target_before_forced_exit_with(resume_tracked, resume_target)
         .map_err(ControlError::ResumeFailed)
-}
-
-fn get_args() -> Result<Args, ControlError> {
-    let args: Vec<String> = env::args().collect();
-    parse_args(&args)
-}
-
-fn parse_args(args: &[String]) -> Result<Args, ControlError> {
-    if args.len() != 3 {
-        return Err(ControlError::InvalidArguments(
-            "usage: kirv <pid> <percentage>",
-        ));
-    }
-
-    let pid: i32 = args[1].trim().parse().map_err(ControlError::InvalidPid)?;
-    if pid <= 0 {
-        return Err(ControlError::InvalidArguments("pid must be greater than 0"));
-    }
-    let percentage = args[2]
-        .trim()
-        .parse()
-        .map_err(ControlError::InvalidThrottle)?;
-
-    if !(1.0..=99.0).contains(&percentage) {
-        return Err(ControlError::InvalidArguments(
-            "percentage must be between 1 and 99",
-        ));
-    }
-
-    Ok(Args::new(pid, percentage))
 }
 
 fn guard_target_group(target_pgid: i32) -> Result<(), Box<dyn Error>> {
@@ -377,64 +338,6 @@ mod tests {
     fn accepts_non_current_process_group() {
         let current_pgid = getpgrp().as_raw();
         assert!(guard_target_group(current_pgid.saturating_add(1)).is_ok());
-    }
-
-    #[test]
-    fn parse_args_rejects_invalid_arity() {
-        let args = vec!["kirv".to_string(), "123".to_string()];
-        assert!(matches!(
-            parse_args(&args),
-            Err(ControlError::InvalidArguments(
-                "usage: kirv <pid> <percentage>"
-            ))
-        ));
-    }
-
-    #[test]
-    fn parse_args_rejects_invalid_pid() {
-        let args = vec!["kirv".to_string(), "abc".to_string(), "10".to_string()];
-        assert!(matches!(
-            parse_args(&args),
-            Err(ControlError::InvalidPid(_))
-        ));
-    }
-
-    #[test]
-    fn parse_args_rejects_non_positive_pid() {
-        let args = vec!["kirv".to_string(), "-1".to_string(), "10".to_string()];
-        assert!(matches!(
-            parse_args(&args),
-            Err(ControlError::InvalidArguments("pid must be greater than 0"))
-        ));
-    }
-
-    #[test]
-    fn parse_args_rejects_out_of_range_percentage() {
-        let args = vec!["kirv".to_string(), "123".to_string(), "100".to_string()];
-        assert!(matches!(
-            parse_args(&args),
-            Err(ControlError::InvalidArguments(
-                "percentage must be between 1 and 99"
-            ))
-        ));
-    }
-
-    #[test]
-    fn parse_args_accepts_percentage_above_fifty() {
-        let args = vec!["kirv".to_string(), "123".to_string(), "99".to_string()];
-
-        let parsed = parse_args(&args).expect("percentage should be accepted");
-
-        assert_eq!(parsed.throttle, 99.0);
-    }
-
-    #[test]
-    fn parse_args_rejects_empty_percentage() {
-        let args = vec!["kirv".to_string(), "123".to_string(), "".to_string()];
-        assert!(matches!(
-            parse_args(&args),
-            Err(ControlError::InvalidThrottle(_))
-        ));
     }
 
     #[test]
