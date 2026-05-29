@@ -1,7 +1,7 @@
 use super::types::{ControlDecision, TargetGroup};
 use nix::{
     errno::Errno,
-    sys::signal::{kill, killpg, Signal},
+    sys::signal::{Signal, kill, killpg},
     unistd::Pid,
 };
 use std::{io, thread, time::Duration};
@@ -134,7 +134,7 @@ fn send_process_signal(pid: i32, signal: Signal) -> io::Result<()> {
 mod tests {
     use super::*;
     use nix::errno::Errno;
-    use std::sync::{atomic::Ordering, MutexGuard};
+    use std::sync::{MutexGuard, atomic::Ordering};
 
     use super::super::types::{ActiveTarget, ProcessIdentity};
 
