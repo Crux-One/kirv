@@ -46,9 +46,14 @@ impl ControlConfig {
 
 fn parse_env_args(args: impl IntoIterator<Item = OsString>) -> Result<Vec<String>, ControlError> {
     args.into_iter()
-        .map(|arg| {
-            arg.into_string()
-                .map_err(|_| ControlError::InvalidArguments("arguments must be valid UTF-8"))
+        .enumerate()
+        .map(|(index, arg)| {
+            if index == 0 {
+                Ok(arg.to_string_lossy().into_owned())
+            } else {
+                arg.into_string()
+                    .map_err(|_| ControlError::InvalidArguments("arguments must be valid UTF-8"))
+            }
         })
         .collect()
 }
@@ -74,6 +79,24 @@ mod tests {
                 "arguments must be valid UTF-8"
             ))
         ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn parse_env_args_accepts_non_utf8_program_path() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let args = vec![
+            OsString::from_vec(vec![b'k', b'i', b'r', b'v', 0xFF]),
+            OsString::from("123"),
+            OsString::from("10"),
+        ];
+
+        let parsed = parse_env_args(args).expect("program path should be converted lossily");
+
+        assert_eq!(parsed.len(), 3);
+        assert_eq!(parsed[1], "123");
+        assert_eq!(parsed[2], "10");
     }
 
     #[test]
