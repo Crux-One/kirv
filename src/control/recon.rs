@@ -238,16 +238,16 @@ fn pgrp_only_pids(pgid: i32) -> io::Result<Vec<i32>> {
 
 fn list_pids(kind: u32, typeinfo: u32) -> io::Result<Vec<i32>> {
     let size = unsafe { libc::proc_listpids(kind, typeinfo, ptr::null_mut(), 0) };
-    if size <= 0 {
-        return Err(io::Error::last_os_error());
+    if normalize_list_pids_result(size)? == 0 {
+        return Ok(Vec::new());
     }
 
     let capacity = size as usize / mem::size_of::<libc::pid_t>();
     let mut buffer: Vec<libc::pid_t> = Vec::with_capacity(capacity);
 
     let result = unsafe { libc::proc_listpids(kind, typeinfo, buffer.as_mut_ptr().cast(), size) };
-    if result <= 0 {
-        return Err(io::Error::last_os_error());
+    if normalize_list_pids_result(result)? == 0 {
+        return Ok(Vec::new());
     }
 
     let count = result as usize / mem::size_of::<libc::pid_t>();
@@ -256,6 +256,14 @@ fn list_pids(kind: u32, typeinfo: u32) -> io::Result<Vec<i32>> {
     }
 
     Ok(buffer)
+}
+
+fn normalize_list_pids_result(result: libc::c_int) -> io::Result<libc::c_int> {
+    if result < 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(result)
+    }
 }
 
 pub(super) fn group_pids(pgid: i32) -> io::Result<Vec<i32>> {
@@ -361,6 +369,14 @@ mod tests {
 
         assert_eq!(err.kind(), io::ErrorKind::NotFound);
         assert_eq!(err.to_string(), "proc_pidinfo returned no BSD process info");
+    }
+
+    #[test]
+    fn zero_byte_list_pids_result_is_empty_success() {
+        let result = normalize_list_pids_result(0)
+            .expect("zero-byte proc_listpids result should be successful");
+
+        assert_eq!(result, 0);
     }
 
     #[test]
