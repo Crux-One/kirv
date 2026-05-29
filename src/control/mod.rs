@@ -12,8 +12,8 @@ use std::{
     error::Error,
     fmt,
     sync::{
-        atomic::{AtomicBool, Ordering},
         Mutex,
+        atomic::{AtomicBool, Ordering},
     },
     thread,
     time::Duration,
@@ -377,11 +377,13 @@ mod tests {
 
     #[test]
     fn resume_tracked_members_skips_empty_stopped_group() {
-        assert!(resume_tracked_members(ActiveTarget {
-            pgid: 1,
-            stopped_pgid: None
-        })
-        .is_ok());
+        assert!(
+            resume_tracked_members(ActiveTarget {
+                pgid: 1,
+                stopped_pgid: None
+            })
+            .is_ok()
+        );
     }
 
     #[test]
@@ -485,17 +487,19 @@ mod tests {
         let mut tracked_resume = None;
         let mut target_resume = None;
 
-        assert!(resume_before_forced_exit_with(
-            |active_target| {
-                tracked_resume = active_target.stopped_pgid;
-                Ok(())
-            },
-            |pgid| {
-                target_resume = Some(pgid);
-                Ok(())
-            }
-        )
-        .is_ok());
+        assert!(
+            resume_before_forced_exit_with(
+                |active_target| {
+                    tracked_resume = active_target.stopped_pgid;
+                    Ok(())
+                },
+                |pgid| {
+                    target_resume = Some(pgid);
+                    Ok(())
+                }
+            )
+            .is_ok()
+        );
 
         assert_eq!(tracked_resume, Some(42));
         assert_eq!(target_resume, None);
@@ -511,14 +515,16 @@ mod tests {
         });
         let mut target_resume = None;
 
-        assert!(resume_before_forced_exit_with(
-            |_| Err(std::io::Error::other("tracked resume failed")),
-            |pgid| {
-                target_resume = Some(pgid);
-                Ok(())
-            }
-        )
-        .is_ok());
+        assert!(
+            resume_before_forced_exit_with(
+                |_| Err(std::io::Error::other("tracked resume failed")),
+                |pgid| {
+                    target_resume = Some(pgid);
+                    Ok(())
+                }
+            )
+            .is_ok()
+        );
 
         assert_eq!(target_resume, Some(42));
         assert!(current_active_target().is_none());
@@ -533,17 +539,19 @@ mod tests {
         });
         let mut resumed_target = None;
 
-        assert!(resume_before_forced_exit_with(
-            |active_target| {
-                assert_eq!(active_target.stopped_pgid, None);
-                Ok(())
-            },
-            |pgid| {
-                resumed_target = Some(pgid);
-                Ok(())
-            }
-        )
-        .is_ok());
+        assert!(
+            resume_before_forced_exit_with(
+                |active_target| {
+                    assert_eq!(active_target.stopped_pgid, None);
+                    Ok(())
+                },
+                |pgid| {
+                    resumed_target = Some(pgid);
+                    Ok(())
+                }
+            )
+            .is_ok()
+        );
 
         assert_eq!(resumed_target, Some(42));
         assert!(current_active_target().is_none());
