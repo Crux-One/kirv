@@ -2,16 +2,12 @@
 name = "kirv"
 version = "0.1.1"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.95"
 
 [dependencies]
 nix = { version = "0.31.3", features = ["signal", "process"] }
 signal-hook = "0.4.4"
-sysinfo = "0.30"
-
-[target.'cfg(target_os = "macos")'.dependencies]
-darwin-libproc = "0.2.0"
-darwin-libproc-sys = "0.2.0"
+sysinfo = "0.39.3"
 
 [package.metadata.docs.rs]
 targets = ["aarch64-apple-darwin"]
