@@ -1,8 +1,9 @@
 use super::types::{ProcessIdentity, RawObservation, TargetGroup};
-use darwin_libproc::pgrp_only_pids;
 use nix::libc;
-use std::{error::Error, io, mem, time::Instant};
-use sysinfo::{Pid, ProcessRefreshKind, RefreshKind, System};
+use std::{error::Error, io, mem, ptr, time::Instant};
+use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
+
+const PROC_PGRP_ONLY: u32 = 2;
 
 pub struct Recon {
     sys: System,
@@ -81,8 +82,11 @@ impl Recon {
             return Ok(None);
         }
 
-        self.sys
-            .refresh_pids_specifics(&sys_pids, ProcessRefreshKind::new().with_cpu());
+        self.sys.refresh_processes_specifics(
+            ProcessesToUpdate::Some(&sys_pids),
+            true,
+            ProcessRefreshKind::nothing().with_cpu(),
+        );
 
         if should_discard_cpu_sample(&mut self.cpu_primed) {
             return Ok(None);
@@ -112,7 +116,7 @@ impl Recon {
 impl Default for Recon {
     fn default() -> Self {
         Self {
-            sys: System::new_with_specifics(RefreshKind::new()),
+            sys: System::new(),
             cpu_primed: false,
         }
     }
@@ -154,7 +158,7 @@ impl std::fmt::Display for ProcessAccessError {
 
 impl Error for ProcessAccessError {}
 
-fn ensure_process_owner(info: &darwin_libproc::proc_bsdinfo) -> Result<(), ProcessOwnerError> {
+fn ensure_process_owner(info: &libc::proc_bsdinfo) -> Result<(), ProcessOwnerError> {
     let target_uid = info.pbi_uid;
     let current_uid = current_uid();
 
@@ -172,14 +176,14 @@ fn current_uid() -> u32 {
     unsafe { libc::getuid() }
 }
 
-fn bsd_info(pid: i32) -> io::Result<darwin_libproc::proc_bsdinfo> {
-    let mut info = mem::MaybeUninit::<darwin_libproc::proc_bsdinfo>::uninit();
-    let size = mem::size_of::<darwin_libproc::proc_bsdinfo>() as libc::c_int;
+fn bsd_info(pid: i32) -> io::Result<libc::proc_bsdinfo> {
+    let mut info = mem::MaybeUninit::<libc::proc_bsdinfo>::uninit();
+    let size = mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
 
     let result = unsafe {
-        darwin_libproc_sys::proc_pidinfo(
+        libc::proc_pidinfo(
             pid,
-            darwin_libproc_sys::PROC_PIDTBSDINFO,
+            libc::PROC_PIDTBSDINFO,
             0,
             info.as_mut_ptr().cast(),
             size,
@@ -228,6 +232,40 @@ fn raw_group_pids(pgid: i32) -> io::Result<Option<Vec<i32>>> {
     normalize_group_pids_result(pgrp_only_pids(pgid))
 }
 
+fn pgrp_only_pids(pgid: i32) -> io::Result<Vec<i32>> {
+    list_pids(PROC_PGRP_ONLY, pgid as u32)
+}
+
+fn list_pids(kind: u32, typeinfo: u32) -> io::Result<Vec<i32>> {
+    let size = unsafe { libc::proc_listpids(kind, typeinfo, ptr::null_mut(), 0) };
+    if normalize_list_pids_result(size)? == 0 {
+        return Ok(Vec::new());
+    }
+
+    let capacity = size as usize / mem::size_of::<libc::pid_t>();
+    let mut buffer: Vec<libc::pid_t> = Vec::with_capacity(capacity);
+
+    let result = unsafe { libc::proc_listpids(kind, typeinfo, buffer.as_mut_ptr().cast(), size) };
+    if normalize_list_pids_result(result)? == 0 {
+        return Ok(Vec::new());
+    }
+
+    let count = result as usize / mem::size_of::<libc::pid_t>();
+    unsafe {
+        buffer.set_len(count);
+    }
+
+    Ok(buffer)
+}
+
+fn normalize_list_pids_result(result: libc::c_int) -> io::Result<libc::c_int> {
+    if result < 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(result)
+    }
+}
+
 pub(super) fn group_pids(pgid: i32) -> io::Result<Vec<i32>> {
     Ok(raw_group_pids(pgid)?
         .unwrap_or_default()
@@ -254,7 +292,7 @@ fn normalize_process_identity_result(
     }
 }
 
-fn identity_from_bsd_info(info: &darwin_libproc::proc_bsdinfo) -> ProcessIdentity {
+fn identity_from_bsd_info(info: &libc::proc_bsdinfo) -> ProcessIdentity {
     ProcessIdentity {
         pid: info.pbi_pid as i32,
         pgid: info.pbi_pgid as i32,
@@ -334,6 +372,14 @@ mod tests {
     }
 
     #[test]
+    fn zero_byte_list_pids_result_is_empty_success() {
+        let result = normalize_list_pids_result(0)
+            .expect("zero-byte proc_listpids result should be successful");
+
+        assert_eq!(result, 0);
+    }
+
+    #[test]
     fn short_bsd_info_result_is_rejected() {
         let err =
             normalize_bsd_info_result(64, 128).expect_err("short result should not be accepted");
@@ -350,8 +396,8 @@ mod tests {
         assert!(members.is_empty());
     }
 
-    fn bsd_info_fixture(uid: u32) -> darwin_libproc::proc_bsdinfo {
-        darwin_libproc::proc_bsdinfo {
+    fn bsd_info_fixture(uid: u32) -> libc::proc_bsdinfo {
+        libc::proc_bsdinfo {
             pbi_flags: 0,
             pbi_status: 0,
             pbi_xstatus: 0,
