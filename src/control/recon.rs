@@ -4,6 +4,10 @@ use std::{error::Error, io, mem, ptr, time::Instant};
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
 
 const PROC_PGRP_ONLY: u32 = 2;
+const LIST_PIDS_MAX_RETRIES: usize = 3;
+// proc_listpids returns bytes copied, not bytes needed, so a full buffer may
+// mean truncation. Slack absorbs small races between sizing and fill calls.
+const LIST_PIDS_SLACK: usize = 16;
 
 pub struct Recon {
     sys: System,
@@ -237,25 +241,49 @@ fn pgrp_only_pids(pgid: i32) -> io::Result<Vec<i32>> {
 }
 
 fn list_pids(kind: u32, typeinfo: u32) -> io::Result<Vec<i32>> {
-    let size = unsafe { libc::proc_listpids(kind, typeinfo, ptr::null_mut(), 0) };
-    if normalize_list_pids_result(size)? == 0 {
-        return Ok(Vec::new());
+    for _ in 0..LIST_PIDS_MAX_RETRIES {
+        let size = unsafe { libc::proc_listpids(kind, typeinfo, ptr::null_mut(), 0) };
+        if normalize_list_pids_result(size)? == 0 {
+            return Ok(Vec::new());
+        }
+
+        let capacity = pid_capacity_for_size(size)
+            .checked_add(LIST_PIDS_SLACK)
+            .ok_or_else(|| io::Error::other("proc_listpids capacity overflow"))?;
+        let buffer_size = pid_buffer_size(capacity)?;
+        let mut buffer: Vec<libc::pid_t> = Vec::with_capacity(capacity);
+
+        let result =
+            unsafe { libc::proc_listpids(kind, typeinfo, buffer.as_mut_ptr().cast(), buffer_size) };
+        if normalize_list_pids_result(result)? == 0 {
+            return Ok(Vec::new());
+        }
+        if list_pids_result_fills_buffer(result, buffer_size) {
+            continue;
+        }
+
+        let count = result as usize / mem::size_of::<libc::pid_t>();
+        unsafe {
+            buffer.set_len(count);
+        }
+
+        return Ok(buffer);
     }
 
-    let capacity = size as usize / mem::size_of::<libc::pid_t>();
-    let mut buffer: Vec<libc::pid_t> = Vec::with_capacity(capacity);
+    Err(io::Error::other(
+        "proc_listpids may have truncated results after retries",
+    ))
+}
 
-    let result = unsafe { libc::proc_listpids(kind, typeinfo, buffer.as_mut_ptr().cast(), size) };
-    if normalize_list_pids_result(result)? == 0 {
-        return Ok(Vec::new());
-    }
+fn pid_capacity_for_size(size: libc::c_int) -> usize {
+    (size as usize).div_ceil(mem::size_of::<libc::pid_t>())
+}
 
-    let count = result as usize / mem::size_of::<libc::pid_t>();
-    unsafe {
-        buffer.set_len(count);
-    }
-
-    Ok(buffer)
+fn pid_buffer_size(capacity: usize) -> io::Result<libc::c_int> {
+    capacity
+        .checked_mul(mem::size_of::<libc::pid_t>())
+        .and_then(|size| libc::c_int::try_from(size).ok())
+        .ok_or_else(|| io::Error::other("proc_listpids buffer size overflow"))
 }
 
 fn normalize_list_pids_result(result: libc::c_int) -> io::Result<libc::c_int> {
@@ -264,6 +292,10 @@ fn normalize_list_pids_result(result: libc::c_int) -> io::Result<libc::c_int> {
     } else {
         Ok(result)
     }
+}
+
+fn list_pids_result_fills_buffer(result: libc::c_int, buffer_size: libc::c_int) -> bool {
+    result >= buffer_size
 }
 
 pub(super) fn group_pids(pgid: i32) -> io::Result<Vec<i32>> {
@@ -377,6 +409,28 @@ mod tests {
             .expect("zero-byte proc_listpids result should be successful");
 
         assert_eq!(result, 0);
+    }
+
+    #[test]
+    fn detects_list_pids_result_that_fills_buffer() {
+        assert!(list_pids_result_fills_buffer(16, 8));
+        assert!(list_pids_result_fills_buffer(8, 8));
+        assert!(!list_pids_result_fills_buffer(4, 8));
+    }
+
+    #[test]
+    fn pid_capacity_rounds_up_to_cover_requested_bytes() {
+        let pid_size = mem::size_of::<libc::pid_t>() as libc::c_int;
+
+        assert_eq!(pid_capacity_for_size(pid_size), 1);
+        assert_eq!(pid_capacity_for_size(pid_size + 1), 2);
+    }
+
+    #[test]
+    fn pid_buffer_size_reports_allocated_bytes() {
+        let pid_size = mem::size_of::<libc::pid_t>() as libc::c_int;
+
+        assert_eq!(pid_buffer_size(2).unwrap(), pid_size * 2);
     }
 
     #[test]
