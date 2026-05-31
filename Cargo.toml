@@ -7,7 +7,7 @@ description = "A modern macOS CPU throttling utility for process groups"
 license = "MIT"
 repository = "https://github.com/Crux-One/kirv"
 readme = "README.md"
-keywords = ["cpu", "throttle", "macos", "process", "cli"]
+keywords = ["cpu", "throttle", "macos"]
 categories = ["command-line-utilities"]
 exclude = [".github/", "assets/"]
 
