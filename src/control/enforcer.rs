@@ -212,7 +212,7 @@ mod tests {
     }
 
     #[test]
-    fn apply_resumes_stopped_group_and_guard_clears_active_target_after_stop_request() {
+    fn apply_resumes_stopped_group_and_session_clears_active_target_after_stop_request() {
         let _guard = GlobalStateGuard::acquire();
         let target = target_group(1234);
         let decision = ControlDecision {
@@ -223,7 +223,7 @@ mod tests {
             pgid: target.pgid,
             stopped_pgid: None,
         });
-        let active_group_guard = super::super::ActiveGroupGuard;
+        let control_session = super::super::control_session_for_test(target);
 
         Enforcer::new()
             .apply_with(&target, &decision, &mut sender, |_| {
@@ -247,7 +247,7 @@ mod tests {
             })
         );
 
-        drop(active_group_guard);
+        drop(control_session);
 
         assert!(super::super::current_active_target().is_none());
     }
