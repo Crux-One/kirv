@@ -95,7 +95,7 @@ impl ControlSession {
         println!("throttle: {}% group CPU (ps/top-style)", self.throttle);
 
         loop {
-            if STOP_SIGNAL.load(Ordering::SeqCst) {
+            if stop_requested() {
                 break;
             }
 
