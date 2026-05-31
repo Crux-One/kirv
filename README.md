@@ -12,7 +12,8 @@ It brings `cputhrottle`-style CPU limiting to modern macOS systems, including Ap
 ## Usage
 
 ```bash
-cargo run --release -- <pid> <percentage>
+cargo install kirv
+kirv <pid> <percentage>
 ```
 
 - `<pid>`: A process ID belonging to the process group you want to limit.
