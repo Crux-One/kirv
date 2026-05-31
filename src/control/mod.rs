@@ -57,13 +57,94 @@ impl fmt::Display for ControlError {
 
 impl Error for ControlError {}
 
-struct ActiveGroupGuard;
+struct ControlSession {
+    target: types::TargetGroup,
+    throttle: f32,
+    recon: Recon,
+    estimator: Estimator,
+    marshal: Marshal,
+    enforcer: Enforcer,
+    reporter: Reporter,
+}
 
-impl Drop for ActiveGroupGuard {
+impl ControlSession {
+    fn begin(config: ControlConfig) -> Result<Self, Box<dyn Error>> {
+        let mut recon = Recon::new();
+        let target = recon.resolve_target_group(config.pid)?;
+        guard_target_group(target.pgid)?;
+        try_set_active_target(ActiveTarget {
+            pgid: target.pgid,
+            stopped_pgid: None,
+        })?;
+        reset_stop_signal();
+
+        Ok(Self {
+            target,
+            throttle: config.throttle,
+            recon,
+            estimator: Estimator::new(CONTROL_PERIOD),
+            marshal: Marshal::new(config.throttle, CONTROL_PERIOD),
+            enforcer: Enforcer::new(),
+            reporter: Reporter::new(),
+        })
+    }
+
+    fn run(&mut self) -> Result<(), Box<dyn Error>> {
+        println!("target pid: {}", self.target.root.pid);
+        println!("target pgid: {}", self.target.pgid);
+        println!("throttle: {}% group CPU (ps/top-style)", self.throttle);
+
+        loop {
+            if STOP_SIGNAL.load(Ordering::SeqCst) {
+                break;
+            }
+
+            let loop_start = std::time::Instant::now();
+            if !self.recon.validate_target_group(&self.target)? {
+                eprintln!(
+                    "target pgid {} has no live processes; stopping control loop",
+                    self.target.pgid
+                );
+                break;
+            }
+            let observation = self.recon.observe_group(&self.target)?;
+            let (estimated, decision) = compute_control_decision(
+                &mut self.estimator,
+                &mut self.marshal,
+                observation.as_ref(),
+            );
+            self.reporter
+                .report(&self.target, observation.as_ref(), &estimated, &decision);
+            self.enforcer.apply(&self.target, &decision)?;
+
+            let elapsed = loop_start.elapsed();
+            if elapsed < CONTROL_PERIOD {
+                wait::with_stop_check(CONTROL_PERIOD - elapsed, stop_requested, thread::sleep);
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl Drop for ControlSession {
     fn drop(&mut self) {
         if let Err(err) = try_resume_active_target() {
             eprintln!("failed to resume stopped target members during shutdown: {err}");
         }
+    }
+}
+
+#[cfg(test)]
+fn control_session_for_test(target: types::TargetGroup) -> ControlSession {
+    ControlSession {
+        target,
+        throttle: 50.0,
+        recon: Recon::new(),
+        estimator: Estimator::new(CONTROL_PERIOD),
+        marshal: Marshal::new(50.0, CONTROL_PERIOD),
+        enforcer: Enforcer::new(),
+        reporter: Reporter::new(),
     }
 }
 
@@ -72,51 +153,8 @@ pub fn start() -> Result<(), Box<dyn Error>> {
 }
 
 fn start_with_config(config: ControlConfig) -> Result<(), Box<dyn Error>> {
-    let mut recon = Recon::new();
-    let target = recon.resolve_target_group(config.pid)?;
-    guard_target_group(target.pgid)?;
-    try_set_active_target(ActiveTarget {
-        pgid: target.pgid,
-        stopped_pgid: None,
-    })?;
-    reset_stop_signal();
-    let _active_group_guard = ActiveGroupGuard;
-
-    let mut estimator = Estimator::new(CONTROL_PERIOD);
-    let mut marshal = Marshal::new(config.throttle, CONTROL_PERIOD);
-    let enforcer = Enforcer::new();
-    let mut reporter = Reporter::new();
-
-    println!("target pid: {}", target.root.pid);
-    println!("target pgid: {}", target.pgid);
-    println!("throttle: {}% group CPU (ps/top-style)", config.throttle);
-
-    loop {
-        if STOP_SIGNAL.load(Ordering::SeqCst) {
-            break;
-        }
-
-        let loop_start = std::time::Instant::now();
-        if !recon.validate_target_group(&target)? {
-            eprintln!(
-                "target pgid {} has no live processes; stopping control loop",
-                target.pgid
-            );
-            break;
-        }
-        let observation = recon.observe_group(&target)?;
-        let (estimated, decision) =
-            compute_control_decision(&mut estimator, &mut marshal, observation.as_ref());
-        reporter.report(&target, observation.as_ref(), &estimated, &decision);
-        enforcer.apply(&target, &decision)?;
-
-        let elapsed = loop_start.elapsed();
-        if elapsed < CONTROL_PERIOD {
-            wait::with_stop_check(CONTROL_PERIOD - elapsed, stop_requested, thread::sleep);
-        }
-    }
-
-    Ok(())
+    let mut session = ControlSession::begin(config)?;
+    session.run()
 }
 
 pub fn stop() {
