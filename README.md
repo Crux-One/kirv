@@ -3,6 +3,8 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/Crux-One/kirv/ci.yml?logo=githubactions&style=for-the-badge)](https://github.com/Crux-One/kirv/actions/workflows/ci.yml)
 [![GitHub License](https://img.shields.io/github/license/Crux-One/kirv?logo=github&style=for-the-badge)](https://github.com/Crux-One/kirv)
 [![lib.rs](https://img.shields.io/badge/lib.rs-Crux--One-blue?logo=rust&style=for-the-badge)](https://lib.rs/~Crux-One)
+[![Release Version](https://img.shields.io/github/v/release/Crux-One/kirv?include_prereleases&logo=github&style=for-the-badge)](https://github.com/Crux-One/kirv/releases/latest)
+[![Crates.io Version](https://img.shields.io/crates/v/kirv?style=for-the-badge&logo=rust&color=yellow)](https://crates.io/crates/kirv)
 
 KIRV *(/kɜːv/)* is a macOS CPU throttling utility inspired by Will Nolan's `cputhrottle` that lets you limit the CPU usage of a target process group to a requested percentage.
 It brings `cputhrottle`-style CPU limiting to modern macOS systems, including Apple silicon Macs, without requiring `sudo` for processes you own.
