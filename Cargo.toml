@@ -1,13 +1,13 @@
 [package]
 name = "kirv"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2024"
 rust-version = "1.95"
 description = "A modern macOS CPU throttling utility for process groups"
 license = "MIT"
 repository = "https://github.com/Crux-One/kirv"
 readme = "README.md"
-keywords = ["cpu", "throttle", "macos", "process", "cli"]
+keywords = ["cpu", "throttle", "macos"]
 categories = ["command-line-utilities"]
 exclude = [".github/", "assets/"]
 
